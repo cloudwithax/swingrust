@@ -1,0 +1,93 @@
+name: nightly-release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            exe: swingmusic
+            asset: swingmusic-linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            exe: swingmusic.exe
+            asset: swingmusic-windows-x86_64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            exe: swingmusic
+            asset: swingmusic-macos-x86_64
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85.0"
+          targets: ${{ matrix.target }}
+
+      - name: rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly-release
+
+      - name: install system deps (linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev libssl-dev pkg-config
+
+      - name: build (release)
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: package artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -Force "target/${{ matrix.target }}/release/${{ matrix.exe }}" "dist/${{ matrix.asset }}"
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    name: publish release (nightly)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: publish
+        uses: ncipollo/release-action@v1
+        with:
+          tag: nightly
+          name: Nightly
+          prerelease: true
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: "dist/**"
+          token: ${{ secrets.GITHUB_TOKEN }}
