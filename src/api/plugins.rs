@@ -370,11 +370,18 @@ async fn optional_user(req: &HttpRequest) -> Result<Option<User>, HttpResponse> 
         None => return Ok(None),
     };
 
-    let header_str = header.to_str().unwrap_or("");
-    if !header_str.starts_with("Bearer ") {
+    let header_str = header.to_str().unwrap_or("").trim();
+    if header_str.is_empty() {
         return Err(HttpResponse::Unauthorized().json(json!({"error": "Invalid token format"})));
     }
-    let token = &header_str[7..];
+    let token = if let Some(rest) = header_str.strip_prefix("Bearer ") {
+        rest
+    } else {
+        header_str
+    };
+    if token.is_empty() {
+        return Err(HttpResponse::Unauthorized().json(json!({"error": "Invalid token format"})));
+    }
 
     let config = UserConfig::load()
         .map_err(|_| HttpResponse::InternalServerError().json(json!({"error": "Config error"})))?;

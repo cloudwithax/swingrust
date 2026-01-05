@@ -668,11 +668,17 @@ async fn resolve_user_id(req: &HttpRequest) -> Option<i64> {
     } else {
         match req.headers().get("Authorization") {
             Some(header_value) => {
-                let header_str = header_value.to_str().unwrap_or("");
-                if header_str.starts_with("Bearer ") {
-                    Some(header_str[7..].to_string())
-                } else {
+                let header_str = header_value.to_str().unwrap_or("").trim();
+                if header_str.is_empty() {
                     None
+                } else if let Some(rest) = header_str.strip_prefix("Bearer ") {
+                    if rest.is_empty() {
+                        None
+                    } else {
+                        Some(rest.to_string())
+                    }
+                } else {
+                    Some(header_str.to_string())
                 }
             }
             None => None,

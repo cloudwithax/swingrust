@@ -662,13 +662,26 @@ async fn auth_user_optional(req: &HttpRequest) -> Result<Option<User>, HttpRespo
 fn bearer_token(req: &HttpRequest) -> Result<Option<String>, HttpResponse> {
     match req.headers().get("Authorization") {
         Some(header_value) => {
-            let header_str = header_value.to_str().unwrap_or("");
-            if !header_str.starts_with("Bearer ") {
+            let header_str = header_value.to_str().unwrap_or("").trim();
+            if header_str.is_empty() {
                 return Err(HttpResponse::Unauthorized().json(serde_json::json!({
                     "error": "Invalid token format"
                 })));
             }
-            Ok(Some(header_str[7..].to_string()))
+
+            let token = if let Some(rest) = header_str.strip_prefix("Bearer ") {
+                rest
+            } else {
+                header_str
+            };
+
+            if token.is_empty() {
+                return Err(HttpResponse::Unauthorized().json(serde_json::json!({
+                    "error": "Invalid token format"
+                })));
+            }
+
+            Ok(Some(token.to_string()))
         }
         None => Ok(None),
     }

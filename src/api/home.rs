@@ -71,12 +71,19 @@ async fn get_recently_played_items(req: HttpRequest, query: web::Query<LimitQuer
 // resolve user id from jwt token
 async fn resolve_user_id(req: &HttpRequest) -> Option<i64> {
     let header = req.headers().get("Authorization")?;
-    let header_str = header.to_str().ok()?;
-    
-    if !header_str.starts_with("Bearer ") {
+    let header_str = header.to_str().ok()?.trim();
+    if header_str.is_empty() {
         return None;
     }
-    let token = &header_str[7..];
+
+    let token = if let Some(rest) = header_str.strip_prefix("Bearer ") {
+        rest
+    } else {
+        header_str
+    };
+    if token.is_empty() {
+        return None;
+    }
 
     let config = UserConfig::load().ok()?;
     let claims = verify_jwt(token, &config.server_id, Some("access")).ok()?;
