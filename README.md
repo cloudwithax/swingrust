@@ -1,10 +1,13 @@
-# SwingMusic (Rust)
+# Swingrust
 
-Self-hosted music server built with Rust and actix-web.
+A faithful remake of Swing Music in Rust using actix-web.
+
+
+Swingrust aims to be 1:1 with the original Swing Music server with a few QoL fixes and enhancements. It will never intend to be a full replacement of Swing Music since a lot of the underlying logic was changed to account for domain-specific limitions and performance.
 
 ## Requirements
 
-- Rust 1.85+ (this repo depends on crates that require a Cargo version with edition 2024 support)
+- Rust 1.85+ 
 - Docker (optional, for container deployment)
 
 ## Local development
