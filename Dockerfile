@@ -34,6 +34,11 @@ COPY --from=builder /app/target/release/swingmusic /usr/local/bin/swingmusic
 
 ENV HOME=/data
 
+# optional: set admin credentials via environment variables
+# defaults to admin:admin if not specified
+ENV SWING_ADMIN_USERNAME=""
+ENV SWING_ADMIN_PASSWORD=""
+
 EXPOSE 1970
 
 USER swingmusic

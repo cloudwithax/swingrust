@@ -2,12 +2,11 @@
 
 A faithful remake of Swing Music in Rust using actix-web.
 
-
 Swingrust aims to be 1:1 with the original Swing Music server with a few QoL fixes and enhancements. It will never intend to be a full replacement of Swing Music since a lot of the underlying logic was changed to account for domain-specific limitions and performance.
 
 ## Requirements
 
-- Rust 1.85+ 
+- Rust 1.85+
 - Docker (optional, for container deployment)
 
 ## Local development
@@ -88,7 +87,7 @@ docker build -t swingmusic:local .
 Run with a persistent data volume:
 
 ```powershell
-docker run --rm -it `
+docker run --rm `
   -p 1970:1970 `
   -v swingmusic-data:/data `
   swingmusic:local
@@ -97,8 +96,28 @@ docker run --rm -it `
 Notes:
 
 - The container runs as a non-root user and writes config and databases under `/data` (the image sets `HOME=/data` and runs with `--config /data`).
-- If you start without `--setup-config` and no users exist yet, the container needs an interactive TTY (`-it`) for first-run prompts.
+- When running non-interactively (typical Docker usage), the server automatically creates a default admin user. See environment variables below.
 - After starting, open http://localhost:1970
+
+### Environment variables
+
+| Variable               | Default | Description                              |
+| ---------------------- | ------- | ---------------------------------------- |
+| `SWING_ADMIN_USERNAME` | `admin` | Username for the auto-created admin user |
+| `SWING_ADMIN_PASSWORD` | `admin` | Password for the auto-created admin user |
+
+Example with custom credentials:
+
+```powershell
+docker run --rm `
+  -p 1970:1970 `
+  -v swingmusic-data:/data `
+  -e SWING_ADMIN_USERNAME=myuser `
+  -e SWING_ADMIN_PASSWORD=mysecurepassword `
+  swingmusic:local
+```
+
+If no environment variables are set, the default credentials are `admin` / `admin`. Change the password after first login.
 
 ### Docker unattended setup
 

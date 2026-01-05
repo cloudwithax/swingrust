@@ -1,13 +1,43 @@
 //! CLI tools
 
 use anyhow::{Context, Result};
+use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
 use crate::config::UserConfig;
 use crate::db::UserTable;
 use crate::utils::auth::hash_password;
+
+/// check if running in an interactive terminal
+pub fn is_interactive() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+/// create default admin user from environment variables or fallback to admin:admin
+pub async fn create_default_admin() -> Result<()> {
+    // check if admin user already exists
+    if UserTable::get_by_username("admin").await?.is_some() {
+        return Ok(());
+    }
+
+    // get credentials from environment variables or use defaults
+    let username = env::var("SWING_ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string());
+    let password = env::var("SWING_ADMIN_PASSWORD").unwrap_or_else(|_| "admin".to_string());
+
+    // check if user with custom username already exists
+    if UserTable::get_by_username(&username).await?.is_some() {
+        tracing::info!("User '{}' already exists; skipping creation.", username);
+        return Ok(());
+    }
+
+    let hash = hash_password(&password)?;
+    UserTable::insert_admin(&username, &hash).await?;
+    tracing::info!("Admin user '{}' created.", username);
+
+    Ok(())
+}
 
 /// Password reset tool
 pub async fn password_reset() -> Result<()> {
@@ -68,10 +98,18 @@ pub async fn password_reset() -> Result<()> {
 }
 
 /// Interactive first-run setup (required when no users exist and no setup file is provided)
+/// In non-interactive mode (docker), creates default admin user automatically
 pub async fn interactive_setup() -> Result<()> {
+    // non-interactive mode (docker, ci, etc.) - create default admin and return
+    if !is_interactive() {
+        tracing::info!("Non-interactive mode detected, creating default admin user...");
+        create_default_admin().await?;
+        return Ok(());
+    }
+
     println!("=== SwingMusic Interactive Setup ===\n");
 
-    // Gather music root directories
+    // gather music root directories
     println!("Enter one or more music root directories (comma-separated):");
     print!("Music paths: ");
     io::stdout().flush()?;
@@ -84,10 +122,10 @@ pub async fn interactive_setup() -> Result<()> {
         .map(|s| s.to_string())
         .collect();
 
-    // Toggle watchdog
+    // toggle watchdog
     let enable_watchdog = prompt_yes_no("Enable file watcher (watchdog)? [Y/n]: ", true)?;
 
-    // Save config updates
+    // save config updates
     let mut config = UserConfig::load()?;
     if !root_dirs.is_empty() {
         config.root_dirs = root_dirs;
@@ -98,7 +136,7 @@ pub async fn interactive_setup() -> Result<()> {
     }
     config.save()?;
 
-    // Admin user creation
+    // admin user creation
     println!("\nCreate admin user:");
     print!("Username [admin]: ");
     io::stdout().flush()?;
@@ -126,7 +164,7 @@ pub async fn interactive_setup() -> Result<()> {
         println!("Admin user '{}' created.", username);
     }
 
-    // Optional guest user
+    // optional guest user
     if prompt_yes_no("Create guest user? [y/N]: ", false)? {
         if UserTable::get_by_username("guest").await?.is_some() {
             println!("Guest already exists; skipping.");
