@@ -1,5 +1,6 @@
 //! Utility modules for SwingMusic
 
+pub mod artist_split_detector;
 pub mod auth;
 pub mod dates;
 pub mod extras;

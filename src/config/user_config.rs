@@ -245,12 +245,10 @@ fn default_artist_separators() -> HashSet<String> {
         .into_iter()
         .collect()
 }
-
-
-// tyler gets the special comma clause because hes special :3
-
+// the smart detector now handles most patterns automatically, so the default is empty.
+// users can still add manual overrides here for edge cases the heuristics miss.
 fn default_artist_split_ignore_list() -> HashSet<String> {
-    ["tyler, the creator".to_string()].into_iter().collect()
+    HashSet::new()
 }
 
 
@@ -287,9 +285,9 @@ mod tests {
         assert!(config.artist_separators.contains(";"));
         assert!(config.artist_separators.contains("/"));
         assert!(config.artist_separators.contains(", "));
-        assert!(config
-            .artist_split_ignore_list
-            .contains("tyler, the creator"));
+        // note: artist_split_ignore_list is now empty by default since the smart
+        // detector handles patterns like "tyler, the creator" automatically
+        assert!(config.artist_split_ignore_list.is_empty());
     }
 
     #[test]

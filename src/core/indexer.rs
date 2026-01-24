@@ -18,7 +18,8 @@ use walkdir::{DirEntry, WalkDir};
 use crate::config::UserConfig;
 use crate::models::Track;
 use crate::utils::hashing::{create_hash, create_track_hash};
-use crate::utils::parsers::{clean_title, split_artists};
+use crate::utils::artist_split_detector::split_artists_smart;
+use crate::utils::parsers::clean_title;
 use crate::utils::tracks::remove_remaster_info;
 
 /// supported audio extensions
@@ -312,10 +313,10 @@ fn extract_track_lofty(path: &Path, config: &IndexerConfig) -> Result<Track> {
         .unwrap_or_default();
 
     if artist_names.is_empty() {
-        artist_names = split_artists(&artist, &config.artist_separators, &config.artist_split_ignore_list);
+        artist_names = split_artists_smart(&artist, &config.artist_separators, &config.artist_split_ignore_list);
     } else if artist_names.len() == 1 {
-        // If single value, it might still need splitting (e.g. joined by separators)
-        artist_names = split_artists(&artist_names[0], &config.artist_separators, &config.artist_split_ignore_list);
+        // if single value, it might still need splitting (e.g. joined by separators)
+        artist_names = split_artists_smart(&artist_names[0], &config.artist_separators, &config.artist_split_ignore_list);
     }
 
     let mut album_artist_names: Vec<String> = tag
@@ -323,12 +324,10 @@ fn extract_track_lofty(path: &Path, config: &IndexerConfig) -> Result<Track> {
         .unwrap_or_default();
 
     if album_artist_names.is_empty() {
-        // Fallback to split_artists on the single album_artist string
-        // Note: album_artist variable above defaults to artist if empty, so we should check tag explicitly first
-        // But we can just use the album_artist string we resolved earlier which handles the fallback
-        album_artist_names = split_artists(&album_artist, &config.artist_separators, &config.artist_split_ignore_list);
+        // fallback to splitting the album_artist string we resolved earlier
+        album_artist_names = split_artists_smart(&album_artist, &config.artist_separators, &config.artist_split_ignore_list);
     } else if album_artist_names.len() == 1 {
-        album_artist_names = split_artists(&album_artist_names[0], &config.artist_separators, &config.artist_split_ignore_list);
+        album_artist_names = split_artists_smart(&album_artist_names[0], &config.artist_separators, &config.artist_split_ignore_list);
     }
 
     // create artist refs with hashes

@@ -26,3 +26,6 @@ logs/
 *.temp
 *.bak
 *.cache
+
+# ignore upstream
+swingmusic/

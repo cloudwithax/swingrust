@@ -39,6 +39,51 @@ pub async fn create_default_admin() -> Result<()> {
     Ok(())
 }
 
+/// configure root directories from environment variable (for docker/non-interactive mode)
+/// SWING_ROOT_DIRS can be a single path or multiple paths separated by : or ;
+pub fn configure_root_dirs_from_env() -> Result<bool> {
+    let root_dirs_env = match env::var("SWING_ROOT_DIRS") {
+        Ok(v) if !v.is_empty() => v,
+        _ => return Ok(false),
+    };
+
+    // split on : or ; to support both unix and windows style path separators
+    // note: on unix, paths don't contain : so this is safe
+    // on windows in docker (linux container), paths also won't have :
+    let dirs: Vec<String> = root_dirs_env
+        .split(|c| c == ':' || c == ';')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .filter(|s| {
+            let path = Path::new(s);
+            if path.exists() && path.is_dir() {
+                true
+            } else {
+                tracing::warn!("SWING_ROOT_DIRS: path does not exist or is not a directory: {}", s);
+                false
+            }
+        })
+        .collect();
+
+    if dirs.is_empty() {
+        tracing::warn!("SWING_ROOT_DIRS was set but no valid directories found");
+        return Ok(false);
+    }
+
+    let mut config = UserConfig::load()?;
+
+    // only update if root_dirs is currently empty (don't override user config)
+    if config.root_dirs.is_empty() {
+        tracing::info!("Configuring root directories from SWING_ROOT_DIRS: {:?}", dirs);
+        config.root_dirs = dirs;
+        config.save()?;
+        Ok(true)
+    } else {
+        tracing::debug!("root_dirs already configured, ignoring SWING_ROOT_DIRS");
+        Ok(false)
+    }
+}
+
 /// Password reset tool
 pub async fn password_reset() -> Result<()> {
     println!("=== SwingMusic Password Reset ===\n");
@@ -98,11 +143,17 @@ pub async fn password_reset() -> Result<()> {
 }
 
 /// Interactive first-run setup (required when no users exist and no setup file is provided)
-/// In non-interactive mode (docker), creates default admin user automatically
+/// In non-interactive mode (docker), creates default admin user and configures root dirs from env
 pub async fn interactive_setup() -> Result<()> {
-    // non-interactive mode (docker, ci, etc.) - create default admin and return
+    // non-interactive mode (docker, ci, etc.) - configure from environment and return
     if !is_interactive() {
-        tracing::info!("Non-interactive mode detected, creating default admin user...");
+        tracing::info!("Non-interactive mode detected, running automated setup...");
+        
+        // configure root directories from SWING_ROOT_DIRS environment variable
+        if let Err(e) = configure_root_dirs_from_env() {
+            tracing::warn!("Failed to configure root dirs from environment: {}", e);
+        }
+        
         create_default_admin().await?;
         return Ok(());
     }

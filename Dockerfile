@@ -39,6 +39,10 @@ ENV HOME=/data
 ENV SWING_ADMIN_USERNAME=""
 ENV SWING_ADMIN_PASSWORD=""
 
+# optional: set music root directories (colon or semicolon separated)
+# example: /music or /music:/other-music
+ENV SWING_ROOT_DIRS=""
+
 EXPOSE 1970
 
 USER swingmusic
