@@ -62,13 +62,13 @@ async fn main() -> Result<()> {
 
     // initialize logging with filters to suppress noisy dependency warnings
     let log_level = if args.debug { "debug" } else { "info" };
-    
+
     // filter out noisy warnings from audio parsing libraries
     let filter = tracing_subscriber::EnvFilter::new(format!(
         "{},symphonia=error,symphonia_core=error,symphonia_bundle_mp3=error,lofty=error",
         log_level
     ));
-    
+
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
@@ -109,6 +109,30 @@ async fn start_swingmusic(host: String, port: u16, setup_config: Option<PathBuf>
     // Ensure we have an initial library scan before loading stores
     // We run this in the background so the server can start immediately
     info!("Checking for initial library scan...");
+
+    // log the resolved root dirs so operators can verify their mounts
+    {
+        let cfg = config::UserConfig::load()?;
+        if cfg.root_dirs.is_empty() {
+            tracing::warn!(
+                "No music root directories configured. \
+                 Set SWING_ROOT_DIRS or configure via the web UI."
+            );
+        } else {
+            info!("Music root directories: {:?}", cfg.root_dirs);
+            for dir in &cfg.root_dirs {
+                let p = std::path::Path::new(dir);
+                if !p.is_dir() {
+                    tracing::warn!(
+                        "Root directory '{}' does not exist or is not accessible. \
+                         Is the volume mounted?",
+                        dir
+                    );
+                }
+            }
+        }
+    }
+
     tokio::spawn(async {
         if let Err(e) = maybe_run_initial_scan().await {
             tracing::error!("Initial scan error: {}", e);
@@ -156,7 +180,7 @@ async fn start_swingmusic(host: String, port: u16, setup_config: Option<PathBuf>
 async fn run_setup(setup_config: Option<PathBuf>) -> Result<()> {
     use crate::config::UserConfig;
     use crate::db::{run_migrations, setup_sqlite, setup_userdata, UserTable};
-    use crate::utils::tools::{apply_setup_file, interactive_setup};
+    use crate::utils::tools::{apply_setup_file, configure_root_dirs_from_env, interactive_setup};
 
     // Setup config file
     let mut config = UserConfig::load()?;
@@ -175,6 +199,13 @@ async fn run_setup(setup_config: Option<PathBuf>) -> Result<()> {
 
     // Run migrations
     run_migrations().await?;
+
+    // always sync root directories from the SWING_ROOT_DIRS env var.
+    // this MUST happen on every startup (not just first-run) so that docker
+    // users can change the env var between restarts and have it take effect.
+    if let Err(e) = configure_root_dirs_from_env() {
+        tracing::warn!("Failed to configure root dirs from environment: {}", e);
+    }
 
     // Apply setup file or interactive prompts when no users exist
     if let Some(path) = setup_config {

@@ -16,32 +16,44 @@ COPY src ./src
 
 RUN cargo build --release --locked
 
+# ---------------------------------------------------------------------------
+# runtime image
+# ---------------------------------------------------------------------------
 FROM debian:bookworm-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     ca-certificates \
+    ffmpeg \
     libsqlite3-0 \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
+# create the unprivileged user and the two volume mount-points up front so
+# ownership is baked into the image regardless of whether volumes are mounted
 RUN groupadd -r swingmusic \
     && useradd -r -g swingmusic -d /data -s /usr/sbin/nologin swingmusic \
-    && mkdir -p /data \
-    && chown -R swingmusic:swingmusic /data
+    && mkdir -p /data /music \
+    && chown -R swingmusic:swingmusic /data /music
 
 COPY --from=builder /app/target/release/swingmusic /usr/local/bin/swingmusic
 
 ENV HOME=/data
 
-# optional: set admin credentials via environment variables
-# defaults to admin:admin if not specified
+# admin credentials (defaults to admin:admin when empty)
 ENV SWING_ADMIN_USERNAME=""
 ENV SWING_ADMIN_PASSWORD=""
 
-# optional: set music root directories (colon or semicolon separated)
-# example: /music or /music:/other-music
-ENV SWING_ROOT_DIRS=""
+# music root directories - this is the canonical way to tell the container
+# where your music lives. when a volume is mounted at /music the default
+# value below means it just works out of the box with zero extra config.
+# multiple roots can be colon-separated, e.g. /music:/podcasts
+ENV SWING_ROOT_DIRS="/music"
+
+# declare volumes so docker knows these are external mount-points.
+# /music  -> bind-mount your music library here
+# /data   -> persistent config, database, thumbnails, etc.
+VOLUME ["/music", "/data"]
 
 EXPOSE 1970
 

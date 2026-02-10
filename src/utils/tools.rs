@@ -39,8 +39,12 @@ pub async fn create_default_admin() -> Result<()> {
     Ok(())
 }
 
-/// configure root directories from environment variable (for docker/non-interactive mode)
-/// SWING_ROOT_DIRS can be a single path or multiple paths separated by : or ;
+/// configure root directories from the SWING_ROOT_DIRS environment variable.
+/// paths can be colon or semicolon separated (e.g. /music or /music:/podcasts).
+///
+/// when this env var is set it is always treated as authoritative -- it will
+/// overwrite whatever root_dirs is in settings.json. this is the expected
+/// behavior for docker deployments where env vars are the primary config.
 pub fn configure_root_dirs_from_env() -> Result<bool> {
     let root_dirs_env = match env::var("SWING_ROOT_DIRS") {
         Ok(v) if !v.is_empty() => v,
@@ -48,38 +52,46 @@ pub fn configure_root_dirs_from_env() -> Result<bool> {
     };
 
     // split on : or ; to support both unix and windows style path separators
-    // note: on unix, paths don't contain : so this is safe
-    // on windows in docker (linux container), paths also won't have :
     let dirs: Vec<String> = root_dirs_env
         .split(|c| c == ':' || c == ';')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .filter(|s| {
             let path = Path::new(s);
-            if path.exists() && path.is_dir() {
+            if path.is_dir() {
                 true
             } else {
-                tracing::warn!("SWING_ROOT_DIRS: path does not exist or is not a directory: {}", s);
+                tracing::warn!(
+                    "SWING_ROOT_DIRS: path does not exist or is not a directory: {} \
+                     (is the volume mounted?)",
+                    s
+                );
                 false
             }
         })
         .collect();
 
     if dirs.is_empty() {
-        tracing::warn!("SWING_ROOT_DIRS was set but no valid directories found");
+        tracing::warn!(
+            "SWING_ROOT_DIRS was set to '{}' but no valid directories were found. \
+             make sure the volume is mounted correctly.",
+            root_dirs_env
+        );
         return Ok(false);
     }
 
     let mut config = UserConfig::load()?;
 
-    // only update if root_dirs is currently empty (don't override user config)
-    if config.root_dirs.is_empty() {
-        tracing::info!("Configuring root directories from SWING_ROOT_DIRS: {:?}", dirs);
+    // env var is authoritative -- always overwrite the persisted root_dirs so
+    // docker users can change SWING_ROOT_DIRS between restarts and have it
+    // take effect without nuking their config volume.
+    if config.root_dirs != dirs {
+        tracing::info!("Setting root directories from SWING_ROOT_DIRS: {:?}", dirs);
         config.root_dirs = dirs;
         config.save()?;
         Ok(true)
     } else {
-        tracing::debug!("root_dirs already configured, ignoring SWING_ROOT_DIRS");
+        tracing::debug!("root_dirs already match SWING_ROOT_DIRS, no update needed");
         Ok(false)
     }
 }
@@ -143,17 +155,13 @@ pub async fn password_reset() -> Result<()> {
 }
 
 /// Interactive first-run setup (required when no users exist and no setup file is provided)
-/// In non-interactive mode (docker), creates default admin user and configures root dirs from env
+/// In non-interactive mode (docker), creates default admin user
 pub async fn interactive_setup() -> Result<()> {
-    // non-interactive mode (docker, ci, etc.) - configure from environment and return
+    // non-interactive mode (docker, ci, etc.) - just create the default admin and return.
+    // root dir configuration from SWING_ROOT_DIRS is handled earlier in run_setup()
+    // so it applies on every restart, not just the first one.
     if !is_interactive() {
-        tracing::info!("Non-interactive mode detected, running automated setup...");
-        
-        // configure root directories from SWING_ROOT_DIRS environment variable
-        if let Err(e) = configure_root_dirs_from_env() {
-            tracing::warn!("Failed to configure root dirs from environment: {}", e);
-        }
-        
+        tracing::info!("Non-interactive mode detected, creating default admin...");
         create_default_admin().await?;
         return Ok(());
     }
