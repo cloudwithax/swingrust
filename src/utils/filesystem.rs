@@ -7,6 +7,7 @@ use walkdir::WalkDir;
 /// Supported audio file extensions
 pub const SUPPORTED_EXTENSIONS: &[&str] = &[
     "flac", "mp3", "wav", "m4a", "ogg", "wma", "opus", "alac", "aiff",
+    "ape", "wv", "mpc", "tta", "dsf", "dff", "webm", "mka", "spx",
 ];
 
 /// Paths to skip during scanning

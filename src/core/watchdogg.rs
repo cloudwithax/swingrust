@@ -138,6 +138,7 @@ impl Watchdog {
     pub fn is_audio_file(path: &PathBuf) -> bool {
         const AUDIO_EXTENSIONS: &[&str] = &[
             "mp3", "flac", "ogg", "wav", "m4a", "aac", "wma", "opus", "aiff", "alac",
+            "ape", "wv", "mpc", "tta", "dsf", "dff", "webm", "mka", "spx",
         ];
 
         path.extension()

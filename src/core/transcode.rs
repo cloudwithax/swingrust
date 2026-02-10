@@ -78,6 +78,51 @@ impl AudioFormat {
             _ => None,
         }
     }
+
+    /// checks whether the given file extension is natively playable in
+    /// modern browsers. formats not in this list need on-the-fly
+    /// transcoding before streaming to avoid silent failures on the client.
+    pub fn is_browser_compatible(ext: &str) -> bool {
+        matches!(
+            ext.to_lowercase().as_str(),
+            "mp3" | "flac" | "wav" | "ogg" | "opus" | "m4a" | "aac" | "webm" | "mp4"
+        )
+    }
+
+    /// returns the default format to transcode incompatible files into.
+    /// mp3 is the safest choice - universal browser support and reasonable
+    /// quality at 320kbps.
+    pub fn default_transcode_target() -> Self {
+        AudioFormat::Mp3
+    }
+
+    /// resolves the mime type for any audio file extension, including
+    /// uncommon formats that need transcoding. used by the streaming
+    /// endpoint to set content-type headers before deciding whether
+    /// to transcode.
+    pub fn mime_type_for_extension(ext: &str) -> &'static str {
+        match ext.to_lowercase().as_str() {
+            "mp3" => "audio/mpeg",
+            "flac" => "audio/flac",
+            "ogg" => "audio/ogg",
+            "opus" => "audio/opus",
+            "m4a" | "aac" | "alac" | "mp4" => "audio/mp4",
+            "wav" => "audio/wav",
+            "aiff" | "aif" => "audio/aiff",
+            "wma" => "audio/x-ms-wma",
+            "ape" => "audio/x-ape",
+            "wv" => "audio/x-wavpack",
+            "mpc" => "audio/x-musepack",
+            "dsf" => "audio/x-dsf",
+            "dff" => "audio/x-dff",
+            "tta" => "audio/x-tta",
+            "webm" | "mka" => "audio/webm",
+            "spx" => "audio/ogg",
+            "ac3" => "audio/ac3",
+            "dts" => "audio/vnd.dts",
+            _ => "application/octet-stream",
+        }
+    }
 }
 
 /// Audio quality preset

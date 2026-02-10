@@ -60,18 +60,18 @@ pub async fn stream_track(
         }));
     }
 
-    // Check if transcoding is requested
+    // determine quality from query param (shared across explicit and auto transcode)
+    let quality = match query.quality.as_deref() {
+        Some("low") => Quality::Low,
+        Some("medium") => Quality::Medium,
+        Some("high") => Quality::High,
+        Some("best") => Quality::Best,
+        _ => Quality::Best,
+    };
+
+    // explicit transcode request via ?format=xxx
     if let Some(format_str) = &query.format {
         if let Some(format) = AudioFormat::from_str(format_str) {
-            let quality = match query.quality.as_deref() {
-                Some("low") => Quality::Low,
-                Some("medium") => Quality::Medium,
-                Some("high") => Quality::High,
-                Some("best") | None => Quality::Best,
-                _ => Quality::Medium,
-            };
-
-            // Transcode and stream
             match Transcoder::transcode_to_bytes(file_path, format, quality) {
                 Ok(data) => {
                     return HttpResponse::Ok()
@@ -79,14 +79,40 @@ pub async fn stream_track(
                         .body(data);
                 }
                 Err(e) => {
-                    tracing::error!("Transcoding failed: {}", e);
-                    // Fall back to original file
+                    tracing::error!("transcoding failed: {}", e);
+                    // fall through to auto-transcode or raw serving
                 }
             }
         }
     }
 
-    // Serve original file with range request support
+    // auto-transcode for formats browsers can't play natively
+    // (wma, aiff, alac, ape, wv, mpc, dsf, dff, tta, etc.)
+    let file_ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    if !AudioFormat::is_browser_compatible(file_ext) {
+        let target = AudioFormat::default_transcode_target();
+        tracing::debug!(
+            "auto-transcoding {} ({}) -> {}",
+            track.trackhash,
+            file_ext,
+            target.extension()
+        );
+
+        match Transcoder::transcode_to_bytes(file_path, target, quality) {
+            Ok(data) => {
+                return HttpResponse::Ok()
+                    .content_type(target.mime_type())
+                    .body(data);
+            }
+            Err(e) => {
+                tracing::error!("auto-transcode failed for {}: {}", file_path.display(), e);
+                // last resort: serve raw file and hope the client can deal with it
+            }
+        }
+    }
+
+    // serve original file with range request support (browser-compatible formats)
     serve_file_with_ranges(file_path, &req).await
 }
 
@@ -104,17 +130,12 @@ async fn serve_file_with_ranges(file_path: &Path, req: &HttpRequest) -> HttpResp
 
     let file_size = metadata.len();
 
-    // Determine content type
-    let content_type = match file_path.extension().and_then(|e| e.to_str()) {
-        Some("mp3") => "audio/mpeg",
-        Some("flac") => "audio/flac",
-        Some("ogg") => "audio/ogg",
-        Some("opus") => "audio/opus",
-        Some("m4a") | Some("aac") => "audio/mp4",
-        Some("wav") => "audio/wav",
-        Some("aiff") => "audio/aiff",
-        _ => "application/octet-stream",
-    };
+    // determine content type using centralized extension -> mime mapping
+    let content_type = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(AudioFormat::mime_type_for_extension)
+        .unwrap_or("application/octet-stream");
 
     // Check for Range header
     if let Some(range_header) = req.headers().get("Range") {
@@ -204,15 +225,11 @@ pub async fn stream_info(path: web::Path<String>) -> impl Responder {
     let file_path = Path::new(&track.filepath);
     let file_size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
 
-    let content_type = match file_path.extension().and_then(|e| e.to_str()) {
-        Some("mp3") => "audio/mpeg",
-        Some("flac") => "audio/flac",
-        Some("ogg") => "audio/ogg",
-        Some("opus") => "audio/opus",
-        Some("m4a") | Some("aac") => "audio/mp4",
-        Some("wav") => "audio/wav",
-        _ => "application/octet-stream",
-    };
+    let content_type = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(AudioFormat::mime_type_for_extension)
+        .unwrap_or("application/octet-stream");
 
     HttpResponse::Ok().json(serde_json::json!({
         "trackhash": track.trackhash,
@@ -229,7 +246,7 @@ pub async fn stream_info(path: web::Path<String>) -> impl Responder {
 }
 
 /// Legacy file endpoint used by upstream clients (no range / transcoding)
-/// 
+///
 /// optimizations applied:
 /// - http caching headers (etag, last-modified, cache-control)
 /// - conditional request handling (304 not modified)
@@ -299,7 +316,7 @@ pub async fn stream_track_legacy(
 
     // resolve track filepath using lightweight lookup
     let store = TrackStore::get();
-    
+
     // try path lookup first (avoids full track clone when possible)
     let filepath = store
         .get_by_path(&raw_filepath)
@@ -396,9 +413,9 @@ async fn serve_file_optimized(
             let path_str = file_path.to_string_lossy();
             let header_name = match sendfile_type {
                 "X-Accel-Redirect" => "X-Accel-Redirect", // nginx
-                _ => "X-Sendfile",                         // apache/lighttpd
+                _ => "X-Sendfile",                        // apache/lighttpd
             };
-            
+
             return HttpResponse::Ok()
                 .insert_header((header_name, path_str.as_ref()))
                 .insert_header(("Content-Type", content_type))

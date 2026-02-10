@@ -16,15 +16,24 @@ use std::sync::Arc;
 use walkdir::{DirEntry, WalkDir};
 
 use crate::config::UserConfig;
+use crate::core::ffmpeg;
 use crate::models::Track;
-use crate::utils::hashing::{create_hash, create_track_hash};
 use crate::utils::artist_split_detector::split_artists_smart;
+use crate::utils::hashing::{create_hash, create_track_hash};
 use crate::utils::parsers::clean_title;
 use crate::utils::tracks::remove_remaster_info;
 
 /// supported audio extensions
+///
+/// the first group (mp3..alac) are common formats that lofty can parse
+/// natively. the second group (ape..dff) are less common but still found
+/// in music collections - lofty handles some, and the rest fall back to
+/// ffprobe for metadata extraction.
 const AUDIO_EXTENSIONS: &[&str] = &[
+    // common formats (lofty handles these)
     "mp3", "flac", "ogg", "wav", "m4a", "aac", "wma", "opus", "aiff", "alac",
+    // less common / audiophile formats
+    "ape", "wv", "mpc", "tta", "dsf", "dff", "webm", "mka", "spx",
 ];
 
 /// pre-cached config data needed for track extraction
@@ -158,7 +167,10 @@ impl Indexer {
         let tracks: Vec<Track> = files
             .par_iter()
             .filter_map(|path| {
-                let result = extract_track_lofty(path, &indexer_config);
+                // try lofty first (fast, pure-rust), fall back to ffprobe
+                // for formats lofty can't handle (wma, dsf, dff, tta, etc.)
+                let result = extract_track_lofty(path, &indexer_config)
+                    .or_else(|_| extract_track_ffprobe(path, &indexer_config));
 
                 // update progress
                 let count = processed.fetch_add(1, Ordering::Relaxed) + 1;
@@ -200,7 +212,9 @@ impl Indexer {
             .par_iter()
             .filter(|path| path.exists())
             .filter_map(|path| {
-                match extract_track_lofty(path, &indexer_config) {
+                match extract_track_lofty(path, &indexer_config)
+                    .or_else(|_| extract_track_ffprobe(path, &indexer_config))
+                {
                     Ok(track) => Some(track),
                     Err(e) => {
                         tracing::warn!("failed to reindex {}: {}", path.display(), e);
@@ -256,7 +270,7 @@ fn extract_track_lofty(path: &Path, config: &IndexerConfig) -> Result<Track> {
         .unwrap_or_else(|| artist.clone());
 
     let genre = tag.and_then(|t| t.genre().map(|s| s.to_string()));
-    
+
     let copyright = tag.and_then(|t| {
         t.get_string(&ItemKey::CopyrightMessage)
             .or_else(|| t.get_string(&ItemKey::Unknown("COPYRIGHT".to_string())))
@@ -309,25 +323,49 @@ fn extract_track_lofty(path: &Path, config: &IndexerConfig) -> Result<Track> {
 
     // split artists using pre-cached config
     let mut artist_names: Vec<String> = tag
-        .map(|t| t.get_strings(&ItemKey::TrackArtist).map(|s| s.to_string()).collect())
+        .map(|t| {
+            t.get_strings(&ItemKey::TrackArtist)
+                .map(|s| s.to_string())
+                .collect()
+        })
         .unwrap_or_default();
 
     if artist_names.is_empty() {
-        artist_names = split_artists_smart(&artist, &config.artist_separators, &config.artist_split_ignore_list);
+        artist_names = split_artists_smart(
+            &artist,
+            &config.artist_separators,
+            &config.artist_split_ignore_list,
+        );
     } else if artist_names.len() == 1 {
         // if single value, it might still need splitting (e.g. joined by separators)
-        artist_names = split_artists_smart(&artist_names[0], &config.artist_separators, &config.artist_split_ignore_list);
+        artist_names = split_artists_smart(
+            &artist_names[0],
+            &config.artist_separators,
+            &config.artist_split_ignore_list,
+        );
     }
 
     let mut album_artist_names: Vec<String> = tag
-        .map(|t| t.get_strings(&ItemKey::AlbumArtist).map(|s| s.to_string()).collect())
+        .map(|t| {
+            t.get_strings(&ItemKey::AlbumArtist)
+                .map(|s| s.to_string())
+                .collect()
+        })
         .unwrap_or_default();
 
     if album_artist_names.is_empty() {
         // fallback to splitting the album_artist string we resolved earlier
-        album_artist_names = split_artists_smart(&album_artist, &config.artist_separators, &config.artist_split_ignore_list);
+        album_artist_names = split_artists_smart(
+            &album_artist,
+            &config.artist_separators,
+            &config.artist_split_ignore_list,
+        );
     } else if album_artist_names.len() == 1 {
-        album_artist_names = split_artists_smart(&album_artist_names[0], &config.artist_separators, &config.artist_split_ignore_list);
+        album_artist_names = split_artists_smart(
+            &album_artist_names[0],
+            &config.artist_separators,
+            &config.artist_split_ignore_list,
+        );
     }
 
     // create artist refs with hashes
@@ -352,7 +390,11 @@ fn extract_track_lofty(path: &Path, config: &IndexerConfig) -> Result<Track> {
 
     // parse genres using pre-cached separators
     let mut genre_names: Vec<String> = tag
-        .map(|t| t.get_strings(&ItemKey::Genre).map(|s| s.to_string()).collect())
+        .map(|t| {
+            t.get_strings(&ItemKey::Genre)
+                .map(|s| s.to_string())
+                .collect()
+        })
         .unwrap_or_default();
 
     if genre_names.is_empty() {
@@ -409,6 +451,169 @@ fn extract_track_lofty(path: &Path, config: &IndexerConfig) -> Result<Track> {
 
     Ok(Track {
         id: 0, // will be set by database
+        trackhash,
+        title: cleaned_title,
+        album,
+        og_album,
+        og_title,
+        albumhash,
+        artists,
+        albumartists,
+        artisthashes,
+        filepath,
+        folder,
+        duration,
+        bitrate,
+        track: track_number.unwrap_or(0),
+        disc: disc_number.unwrap_or(1),
+        date: date_timestamp,
+        genres,
+        genrehashes,
+        last_mod,
+        image: String::new(),
+        copyright,
+        extra: serde_json::Value::Null,
+        lastplayed: 0,
+        playcount: 0,
+        playduration: 0,
+        weakhash,
+        pos: None,
+        help_text: String::new(),
+        score: 0.0,
+        explicit: false,
+        fav_userids: HashSet::new(),
+    })
+}
+
+/// fallback metadata extraction using ffprobe for formats lofty can't handle.
+/// this spawns an ffprobe subprocess so it's slower than the lofty path -
+/// only used when lofty fails (wma, dsf, dff, tta, and other exotic formats).
+fn extract_track_ffprobe(path: &Path, config: &IndexerConfig) -> Result<Track> {
+    let meta = ffmpeg::probe_metadata(path)?;
+
+    let filepath = path.to_string_lossy().to_string();
+    let folder = path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let title = meta.title.filter(|s| !s.is_empty()).unwrap_or_else(|| {
+        path.file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Unknown")
+            .to_string()
+    });
+
+    let album = meta
+        .album
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Unknown Album".to_string());
+
+    let artist = meta
+        .artist
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Unknown Artist".to_string());
+
+    let album_artist = meta
+        .album_artist
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| artist.clone());
+
+    let genre = meta.genre;
+    let copyright = meta.copyright;
+    let track_number = meta.track;
+    let disc_number = meta.disc;
+
+    let year: Option<i32> = meta.date.and_then(|d| {
+        let s = d.trim();
+        if s.len() >= 4 && s[..4].chars().all(|c| c.is_ascii_digit()) {
+            s[..4].parse::<i32>().ok()
+        } else {
+            None
+        }
+    });
+
+    let duration = meta.duration as i32;
+    let bitrate = meta.bitrate;
+
+    let last_mod = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64)
+        .unwrap_or(0);
+
+    let clean = clean_title(&title);
+    let cleaned_title = remove_remaster_info(&clean);
+
+    let artist_names = split_artists_smart(
+        &artist,
+        &config.artist_separators,
+        &config.artist_split_ignore_list,
+    );
+
+    let album_artist_names = split_artists_smart(
+        &album_artist,
+        &config.artist_separators,
+        &config.artist_split_ignore_list,
+    );
+
+    let artists: Vec<crate::models::ArtistRefItem> = artist_names
+        .iter()
+        .map(|name| {
+            let artisthash = create_hash(&[name], true);
+            crate::models::ArtistRefItem::new(name.clone(), artisthash)
+        })
+        .collect();
+
+    let albumartists: Vec<crate::models::ArtistRefItem> = album_artist_names
+        .iter()
+        .map(|name| {
+            let artisthash = create_hash(&[name], true);
+            crate::models::ArtistRefItem::new(name.clone(), artisthash)
+        })
+        .collect();
+
+    let artisthashes: Vec<String> = artists.iter().map(|a| a.artisthash.clone()).collect();
+
+    let mut genre_names: Vec<String> = Vec::new();
+    if let Some(g) = &genre {
+        genre_names = config
+            .genre_separators
+            .iter()
+            .fold(vec![g.as_str()], |acc, sep| {
+                acc.into_iter().flat_map(|s| s.split(sep)).collect()
+            })
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+
+    let genres: Vec<crate::models::GenreRef> = genre_names
+        .iter()
+        .map(|name| {
+            let genrehash = create_hash(&[name], true);
+            crate::models::GenreRef::new(name.clone(), genrehash)
+        })
+        .collect();
+
+    let genrehashes: Vec<String> = genres.iter().map(|g| g.genrehash.clone()).collect();
+
+    let og_title = cleaned_title.clone();
+    let og_album = album.clone();
+    let albumhash = create_hash(&[&og_album, &album_artist_names.join("-")], true);
+    let trackhash = create_track_hash(&artist_names.join(", "), &og_album, &og_title);
+    let weakhash = create_hash(&[&og_album, &og_title], true);
+
+    let date_timestamp = if let Some(y) = year {
+        chrono::NaiveDate::from_ymd_opt(y, 1, 1)
+            .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    Ok(Track {
+        id: 0,
         trackhash,
         title: cleaned_title,
         album,
