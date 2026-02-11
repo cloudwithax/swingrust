@@ -27,7 +27,7 @@ RUN apt-get update \
     ffmpeg \
     libsqlite3-0 \
     libssl3 \
-    su-exec \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # create the unprivileged user and the two volume mount-points up front so

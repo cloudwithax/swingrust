@@ -5,7 +5,7 @@
 
 if [ "$(id -u)" = "0" ]; then
     chown -R swingmusic:swingmusic /data /music 2>/dev/null || true
-    exec su-exec swingmusic "$@"
+    exec gosu swingmusic "$@"
 else
     exec "$@"
 fi
