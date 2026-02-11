@@ -27,6 +27,7 @@ RUN apt-get update \
     ffmpeg \
     libsqlite3-0 \
     libssl3 \
+    su-exec \
     && rm -rf /var/lib/apt/lists/*
 
 # create the unprivileged user and the two volume mount-points up front so
@@ -37,6 +38,7 @@ RUN groupadd -r swingmusic \
     && chown -R swingmusic:swingmusic /data /music
 
 COPY --from=builder /app/target/release/swingmusic /usr/local/bin/swingmusic
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
 ENV HOME=/data
 
@@ -57,7 +59,7 @@ VOLUME ["/music", "/data"]
 
 EXPOSE 1970
 
-USER swingmusic
-
-ENTRYPOINT ["swingmusic"]
-CMD ["--host", "0.0.0.0", "--port", "1970", "--config", "/data"]
+# start as root so the entrypoint can fix volume permissions,
+# then drop to the swingmusic user via su-exec
+ENTRYPOINT ["entrypoint.sh"]
+CMD ["swingmusic", "--host", "0.0.0.0", "--port", "1970", "--config", "/data"]
