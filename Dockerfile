@@ -38,7 +38,8 @@ RUN groupadd -r swingmusic \
     && chown -R swingmusic:swingmusic /data /music
 
 COPY --from=builder /app/target/release/swingmusic /usr/local/bin/swingmusic
-COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV HOME=/data
 
