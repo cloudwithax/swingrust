@@ -61,5 +61,5 @@ EXPOSE 1970
 
 # start as root so the entrypoint can fix volume permissions,
 # then drop to the swingmusic user via su-exec
-ENTRYPOINT ["entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["swingmusic", "--host", "0.0.0.0", "--port", "1970", "--config", "/data"]
